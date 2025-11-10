@@ -14,21 +14,23 @@ function OnUpdate(doc, meta) {
     //log(`Processing document with date: ${dateString}`)
 
     // Prepare CSV file
-    let csvHeader = 'readingId,activityId,assetId,companyId,insertionTime,originalTime,requestTime,sensorStatus,velocity,weight,lat,lon';
     const csvLine = `${doc.readingId},${doc.activityId},${doc.assetId},${doc.companyId},${doc.insertionTime},${doc.originalTime},${doc.requestTime},${doc.sensorStatus},${doc.velocity},${doc.weight},${doc.location.lat},${doc.location.lon}`;
 
-    // ⚠️ Increment atomically counter document
-    let count = updateWithCAS(metadata_collection, dateString, () => ({count: 0}), (d) => {
-        d.count++;
-        return d;
-    }).count
-
-    // Calculate the chunk number and document ID for the current document
-    const chunkNumber = Math.floor(count / MAX_DOCS_PER_AGGREGATE);
+    // Calculate the chunk number using a hash function
+    const chunkNumber = hash(`${doc.insertionTime}${doc.assetId}`) % DOCS_PER_DAY;
     const chunkId = `${dateString}-${chunkNumber}`;
 
     // Append atomically the csv line to the aggregated document
-    updateWithCAS(dst_collection, chunkId, () => csvHeader, (d) => d + '\n' + csvLine);
+    updateWithCAS(dst_collection, chunkId, () => [], (d) => d.push(csvLine));
+}
+
+function hash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        hash |= 0; // Convert to 32bit integer
+    }
+    return Math.abs(hash);
 }
 
 function updateWithCAS(collection, id, init, update) {
@@ -46,7 +48,7 @@ function updateWithCAS(collection, id, init, update) {
         }
 
         // Update the document
-        doc = update(doc);
+        update(doc);
 
         // Save aggregated document
         // If this is the first insertion
